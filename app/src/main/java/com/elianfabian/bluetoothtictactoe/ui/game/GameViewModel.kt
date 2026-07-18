@@ -131,9 +131,9 @@ class GameViewModel(
 				else false
 			}
 		}
-		runCatching {
+		//runCatching {
 			lapisBtRpc.registerBluetoothServerService(opponentAddress, impl, TicTacToeService::class)
-		}
+		//}
 		serviceProxy = lapisBtRpc.getOrCreateBluetoothClientService(opponentAddress, TicTacToeService::class)
 	}
 
