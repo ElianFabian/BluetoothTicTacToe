@@ -1,13 +1,13 @@
 plugins {
 	alias(libs.plugins.android.application)
 	alias(libs.plugins.kotlin.compose)
+	alias(libs.plugins.kotlin.android)
+	alias(libs.plugins.kotlin.serialization)
 }
 
 android {
 	namespace = "com.elianfabian.bluetoothtictactoe"
-	compileSdk {
-		version = release(37)
-	}
+	compileSdk = 37
 
 	defaultConfig {
 		applicationId = "com.elianfabian.bluetoothtictactoe"
@@ -21,9 +21,11 @@ android {
 
 	buildTypes {
 		release {
-			optimization {
-				enable = false
-			}
+			isMinifyEnabled = false
+			proguardFiles(
+				getDefaultProguardFile("proguard-android-optimize.txt"),
+				"proguard-rules.pro"
+			)
 		}
 	}
 	compileOptions {
@@ -33,20 +35,27 @@ android {
 	buildFeatures {
 		compose = true
 	}
+	kotlinOptions {
+		jvmTarget = "11"
+	}
 }
 
 dependencies {
 	implementation(libs.activityResultBridge)
 	implementation(libs.yuruPermissions)
 	implementation(libs.lapisBtRpc)
+	implementation(libs.kotlinx.serialization.json)
+	implementation(libs.flow.combinetuple)
 	implementation(platform(libs.androidx.compose.bom))
 	implementation(libs.androidx.activity.compose)
 	implementation(libs.androidx.compose.material3)
+	implementation(libs.androidx.compose.material.icons.extended)
 	implementation(libs.androidx.compose.ui)
 	implementation(libs.androidx.compose.ui.graphics)
 	implementation(libs.androidx.compose.ui.tooling.preview)
 	implementation(libs.androidx.core.ktx)
 	implementation(libs.androidx.lifecycle.runtime.ktx)
+	implementation(libs.androidx.lifecycle.viewmodel.compose)
 	testImplementation(libs.junit)
 	androidTestImplementation(platform(libs.androidx.compose.bom))
 	androidTestImplementation(libs.androidx.compose.ui.test.junit4)

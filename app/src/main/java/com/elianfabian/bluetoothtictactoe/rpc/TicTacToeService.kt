@@ -1,32 +1,31 @@
 package com.elianfabian.bluetoothtictactoe.rpc
 
 import com.elianfabian.bluetoothtictactoe.data.GameState
-import com.elianfabian.lapisbt.LapisMethod
-import com.elianfabian.lapisbt.LapisParam
-import com.elianfabian.lapisbt.LapisRpc
+import com.elianfabian.lapisbt_rpc.annotation.LapisMethod
+import com.elianfabian.lapisbt_rpc.annotation.LapisParam
+import com.elianfabian.lapisbt_rpc.annotation.LapisRpc
 import kotlinx.coroutines.flow.Flow
 
 @LapisRpc("TicTacToeService")
 interface TicTacToeService {
     /**
-     * Called by the Guest to invite the Host to a new game.
-     * The implementation on the Host side should suspend until the user accepts or declines.
-     */
-    @LapisMethod("requestGame")
-    suspend fun requestGame(): Boolean
-
-    /**
-     * Streams the authoritative game state from the Host to the Guest.
+     * Called by the Guest to observe the authoritative state from the Host.
      */
     @LapisMethod("gameState")
     fun gameState(): Flow<GameState>
 
     /**
-     * Called by either player to make a move on the 3x3 grid.
+     * Called by the Guest to perform a move on the Host's board.
      */
     @LapisMethod("makeMove")
     suspend fun makeMove(
         @LapisParam("row") row: Int,
         @LapisParam("col") col: Int
     ): Boolean
+
+    /**
+     * Called by the Guest to request a game restart from the Host.
+     */
+    @LapisMethod("restartGame")
+    suspend fun restartGame(): Boolean
 }

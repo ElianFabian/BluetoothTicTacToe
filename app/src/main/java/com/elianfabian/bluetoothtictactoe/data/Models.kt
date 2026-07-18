@@ -21,5 +21,29 @@ enum class GameStatus {
     Waiting,
     Playing,
     Finished,
-    OpponentDisconnected
+    OpponentDisconnected,
+    OpponentLeft
 }
+
+@Serializable
+enum class InvitationResponse {
+    Accepted,
+    Rejected,
+    Busy,
+    InGame,
+    Free
+}
+
+@Serializable
+enum class PlayerState {
+    Free,
+    Invited,
+    Waiting,
+    InGame
+}
+
+data class GameConfig(
+    val deviceAddress: com.elianfabian.lapisbt.model.BluetoothDevice.Address,
+    val isHost: Boolean,
+    val sessionId: String
+)
