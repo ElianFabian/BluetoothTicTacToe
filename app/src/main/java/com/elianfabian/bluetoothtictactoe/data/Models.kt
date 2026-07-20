@@ -39,7 +39,8 @@ enum class PlayerState {
     Free,
     Invited,
     Waiting,
-    InGame
+    InGame,
+    InGamePaused
 }
 
 data class GameConfig(

@@ -3,7 +3,6 @@ package com.elianfabian.bluetoothtictactoe.ui.discovery
 import android.Manifest
 import android.app.Activity
 import android.bluetooth.BluetoothAdapter
-import android.content.Context
 import android.content.Intent
 import android.os.Build
 import android.provider.Settings
@@ -11,16 +10,21 @@ import androidx.activity.result.contract.ActivityResultContracts
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.elianfabian.activity_result_bridge.ActivityResultBridge
-import com.elianfabian.bluetoothtictactoe.LapisBtProvider
-import com.elianfabian.bluetoothtictactoe.LapisBtProvider.TIC_TAC_TOE_UUID
 import com.elianfabian.bluetoothtictactoe.data.GameConfig
+import com.elianfabian.bluetoothtictactoe.data.GameSessionManager
 import com.elianfabian.bluetoothtictactoe.data.InvitationResponse
+import com.elianfabian.bluetoothtictactoe.data.LocalTicTacToeDataSource
 import com.elianfabian.bluetoothtictactoe.data.PlayerState
+import com.elianfabian.bluetoothtictactoe.data.RemoteTicTacToeDataSource
 import com.elianfabian.bluetoothtictactoe.rpc.InvitationService
+import com.elianfabian.bluetoothtictactoe.rpc.TicTacToeService
 import com.elianfabian.lapisbt.LapisBt
 import com.elianfabian.lapisbt.model.BluetoothDevice
 import com.elianfabian.lapisbt.model.ScannedBluetoothDevice
+import com.elianfabian.lapisbt_rpc.LapisBtRpc
 import com.elianfabian.lapisbt_rpc.getLapisRequestInfo
+import com.elianfabian.lapisbt_rpc.getOrCreateBluetoothClientService
+import com.elianfabian.lapisbt_rpc.registerBluetoothServerService
 import com.elianfabian.yuru_permissions.Yuru
 import com.elianfabian.yuru_permissions.YuruPermissionState
 import com.zhuinden.flowcombinetuplekt.combineTuple
@@ -34,19 +38,20 @@ import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
+import java.util.UUID
 
 class DeviceDiscoveryViewModel(
-	context: Context,
+	private val lapisBt: LapisBt,
+	private val lapisBtRpc: LapisBtRpc,
+	private val sessionManager: GameSessionManager,
 	private val yuru: Yuru = Yuru.getInstance(),
 	private val activityResultBridge: ActivityResultBridge = ActivityResultBridge.getInstance(),
 ) : ViewModel(), InvitationService {
 
-	private val lapisBt = LapisBtProvider.getLapisBt(context)
-	private val lapisBtRpc = LapisBtProvider.getLapisBtRpc(context)
-	private val playerRepository = LapisBtProvider.getPlayerRepository(context)
-
 	private val remotePlayerStates = MutableStateFlow<Map<BluetoothDevice.Address, PlayerState>>(emptyMap())
 	private val requestedDeviceAddress = MutableStateFlow<BluetoothDevice.Address?>(null)
+
+	private val serviceUuid = UUID.fromString("6d61f1f1-1e1e-4e4e-8e8e-123456789abc")
 
 	private val bluetoothPermissionController = yuru.multiplePermissionController(
 		buildList {
@@ -70,11 +75,17 @@ class DeviceDiscoveryViewModel(
 		remotePlayerStates,
 		lapisBt.activeBluetoothServersUuids,
 		lapisBt.bluetoothDeviceName,
-		playerRepository.state,
+		sessionManager.state,
 		requestedDeviceAddress,
-		playerRepository.activeGameConfig,
+		sessionManager.activeGameConfig,
 		_state
-	).map { (scanned, paired, scanning, btState, permissionStates, remotes, activeServers, localName, localPlayerStatus, requestedAddr, activeGame, localState) ->
+	).map {
+			(
+				scanned, paired, scanning, btState, permissionStates, remotes, activeServers, localName,
+				localPlayerStatus, requestedAddr, activeGame, localState,
+			),
+		->
+		val activeDevice = activeGame?.let { lapisBt.getRemoteDevice(it.deviceAddress) }
 		localState.copy(
 			scannedDevices = scanned,
 			pairedDevices = paired,
@@ -82,11 +93,12 @@ class DeviceDiscoveryViewModel(
 			isBluetoothOn = btState.isOn,
 			permissionStates = permissionStates,
 			remotePlayerStates = remotes,
-			isServerRunning = activeServers.contains(TIC_TAC_TOE_UUID),
+			isServerRunning = activeServers.contains(serviceUuid),
 			localDeviceName = localName,
 			localPlayerState = localPlayerStatus,
 			requestedDeviceAddress = requestedAddr,
-			activeGameConfig = activeGame
+			activeGameConfig = activeGame,
+			activeDevice = activeDevice
 		)
 	}.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), DeviceDiscoveryState())
 
@@ -100,15 +112,18 @@ class DeviceDiscoveryViewModel(
 	private fun observeGameCleanup() {
 		viewModelScope.launch {
 			combineTuple(
-				playerRepository.state,
+				sessionManager.state,
 				remotePlayerStates,
-				playerRepository.activeGameConfig
+				sessionManager.activeGameConfig
 			).collect { (localState, remotes, activeConfig) ->
 				if (activeConfig == null) return@collect
 
 				val remoteState = remotes[activeConfig.deviceAddress] ?: PlayerState.Free
-				if (localState != PlayerState.InGame && remoteState != PlayerState.InGame) {
-					playerRepository.activeGameConfig.value = null
+				val localIsActive = localState == PlayerState.InGame || localState == PlayerState.InGamePaused
+				val remoteIsActive = remoteState == PlayerState.InGame || remoteState == PlayerState.InGamePaused
+				
+				if (!localIsActive && !remoteIsActive) {
+					sessionManager.clearActiveGame()
 				}
 			}
 		}
@@ -123,9 +138,21 @@ class DeviceDiscoveryViewModel(
 					currentMap.filterKeys { it in connectedAddresses }
 				}
 
+				// If we are in InGame or InGamePaused state and our opponent disconnected, reset to Free
+				val activeConfig = sessionManager.activeGameConfig.value
+				val localState = sessionManager.state.value
+				val localIsActive = localState == PlayerState.InGame || localState == PlayerState.InGamePaused
+				
+				if (localIsActive && activeConfig != null) {
+					if (activeConfig.deviceAddress !in connectedAddresses) {
+						sessionManager.state.value = PlayerState.Free
+						sessionManager.clearActiveGame()
+					}
+				}
+
 				connectedList.forEach { device ->
 					// Register the ViewModel itself as the service implementation for all connected devices
-					lapisBtRpc.registerBluetoothServerService(device.address, this@DeviceDiscoveryViewModel, InvitationService::class)
+					lapisBtRpc.registerBluetoothServerService<InvitationService>(device.address, this@DeviceDiscoveryViewModel)
 
 					// Observe remote player state
 					observeRemotePlayerState(device.address)
@@ -136,7 +163,7 @@ class DeviceDiscoveryViewModel(
 
 	private fun observeRemotePlayerState(address: BluetoothDevice.Address) {
 		viewModelScope.launch {
-			val proxy = lapisBtRpc.getOrCreateBluetoothClientService(address, InvitationService::class)
+			val proxy = lapisBtRpc.getOrCreateBluetoothClientService<InvitationService>(address)
 			try {
 				proxy.playerState().collect { playerState ->
 					remotePlayerStates.update { it + (address to playerState) }
@@ -149,13 +176,14 @@ class DeviceDiscoveryViewModel(
 		}
 	}
 
-	override fun playerState(): Flow<PlayerState> = playerRepository.state.asStateFlow()
+	override fun playerState(): Flow<PlayerState> = sessionManager.state.asStateFlow()
 
 	override suspend fun requestGameInvitation(sessionId: String): InvitationResponse {
 		println("$$$$ requestGameInvitation: $invitationDeferred")
-		// If an invitation is already pending, return Busy
 		if (invitationDeferred != null) return InvitationResponse.Busy
-		if (playerRepository.state.value == PlayerState.InGame) return InvitationResponse.InGame
+		if (sessionManager.state.value == PlayerState.InGame || sessionManager.state.value == PlayerState.InGamePaused) {
+			return InvitationResponse.InGame
+		}
 
 		val requestInfo = getLapisRequestInfo()
 		val challengerAddress = requestInfo.deviceAddress
@@ -165,24 +193,26 @@ class DeviceDiscoveryViewModel(
 		invitationDeferred = deferred
 
 		try {
-			playerRepository.state.value = PlayerState.Invited
+			sessionManager.state.value = PlayerState.Invited
 			_state.update { it.copy(pendingInvitation = challenger) }
 
 			val accepted = deferred.await()
 
 			if (accepted) {
-				playerRepository.state.value = PlayerState.InGame
+				sessionManager.state.value = PlayerState.InGame
 				val config = GameConfig(
 					deviceAddress = challengerAddress,
 					isHost = false,
 					sessionId = sessionId
 				)
-				playerRepository.activeGameConfig.value = config
+				val proxy = lapisBtRpc.getOrCreateBluetoothClientService(challengerAddress, TicTacToeService::class)
+				sessionManager.activeDataSource.value = RemoteTicTacToeDataSource(proxy)
+				sessionManager.activeGameConfig.value = config
 				_state.update { it.copy(gameStarted = config) }
 				return InvitationResponse.Accepted
 			}
 
-			playerRepository.state.value = PlayerState.Free
+			sessionManager.state.value = PlayerState.Free
 			return InvitationResponse.Rejected
 		}
 		finally {
@@ -207,18 +237,15 @@ class DeviceDiscoveryViewModel(
 			DeviceDiscoveryAction.DeclineInvitation -> {
 				invitationDeferred?.complete(false)
 				_state.update { it.copy(pendingInvitation = null) }
-				playerRepository.state.value = PlayerState.Free
+				sessionManager.state.value = PlayerState.Free
 			}
 			is DeviceDiscoveryAction.RequestGame -> requestGame(action.device)
 			is DeviceDiscoveryAction.RejoinGame -> {
-				playerRepository.state.value = PlayerState.InGame
+				sessionManager.state.value = PlayerState.InGame
 				_state.update { it.copy(gameStarted = action.config) }
 			}
 			DeviceDiscoveryAction.ResetNavigation -> {
 				_state.update { it.copy(gameStarted = null) }
-				if (playerRepository.state.value != PlayerState.InGame) {
-					playerRepository.state.value = PlayerState.Free
-				}
 			}
 		}
 	}
@@ -240,7 +267,7 @@ class DeviceDiscoveryViewModel(
 		return activityResultBridge.launch(
 			ActivityResultContracts.StartActivityForResult(),
 			Intent(BluetoothAdapter.ACTION_REQUEST_ENABLE)
-		).resultCode == android.app.Activity.RESULT_OK
+		).resultCode == Activity.RESULT_OK
 	}
 
 	private suspend fun requestDiscoveryPermissions(): Boolean {
@@ -252,7 +279,7 @@ class DeviceDiscoveryViewModel(
 		viewModelScope.launch {
 			_state.update { it.copy(connectionStatus = ConnectionStatus.Connecting(device)) }
 
-			val result = lapisBt.connectToDeviceWithoutPairing(device.address, TIC_TAC_TOE_UUID)
+			val result = lapisBt.connectToDeviceWithoutPairing(device.address, serviceUuid)
 
 			when (result) {
 				is LapisBt.ConnectionResult.ConnectionEstablished -> {
@@ -267,9 +294,9 @@ class DeviceDiscoveryViewModel(
 
 	private fun requestGame(device: BluetoothDevice) {
 		viewModelScope.launch {
-			val proxy = lapisBtRpc.getOrCreateBluetoothClientService(device.address, InvitationService::class)
+			val proxy = lapisBtRpc.getOrCreateBluetoothClientService<InvitationService>(device.address)
 
-			playerRepository.state.value = PlayerState.Waiting
+			sessionManager.state.value = PlayerState.Waiting
 			requestedDeviceAddress.value = device.address
 
 			val sessionId = java.util.UUID.randomUUID().toString()
@@ -286,13 +313,14 @@ class DeviceDiscoveryViewModel(
 
 			when (response) {
 				InvitationResponse.Accepted -> {
-					playerRepository.state.value = PlayerState.InGame
+					sessionManager.state.value = PlayerState.InGame
 					val config = GameConfig(
 						deviceAddress = device.address,
 						isHost = true,
 						sessionId = sessionId
 					)
-					playerRepository.activeGameConfig.value = config
+					sessionManager.activeDataSource.value = LocalTicTacToeDataSource()
+					sessionManager.activeGameConfig.value = config
 					_state.update {
 						it.copy(
 							connectionStatus = ConnectionStatus.Connected(device),
@@ -301,19 +329,19 @@ class DeviceDiscoveryViewModel(
 					}
 				}
 				InvitationResponse.Busy -> {
-					playerRepository.state.value = PlayerState.Free
+					sessionManager.state.value = PlayerState.Free
 					_state.update { it.copy(connectionStatus = ConnectionStatus.Error("${device.name} is busy")) }
 				}
 				InvitationResponse.InGame -> {
-					playerRepository.state.value = PlayerState.Free
+					sessionManager.state.value = PlayerState.Free
 					_state.update { it.copy(connectionStatus = ConnectionStatus.Error("${device.name} is already in a game")) }
 				}
 				InvitationResponse.Free -> {
-					playerRepository.state.value = PlayerState.Free
+					sessionManager.state.value = PlayerState.Free
 					_state.update { it.copy(connectionStatus = ConnectionStatus.Error("${device.name} state mismatch")) }
 				}
 				InvitationResponse.Rejected -> {
-					playerRepository.state.value = PlayerState.Free
+					sessionManager.state.value = PlayerState.Free
 					_state.update { it.copy(connectionStatus = ConnectionStatus.Error("Game request declined")) }
 				}
 			}
@@ -365,6 +393,7 @@ data class DeviceDiscoveryState(
 	val localPlayerState: PlayerState = PlayerState.Free,
 	val requestedDeviceAddress: BluetoothDevice.Address? = null,
 	val activeGameConfig: GameConfig? = null,
+	val activeDevice: BluetoothDevice? = null,
 )
 
 sealed interface ConnectionStatus {

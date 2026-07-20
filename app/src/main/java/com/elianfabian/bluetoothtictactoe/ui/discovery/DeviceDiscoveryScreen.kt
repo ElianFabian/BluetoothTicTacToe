@@ -161,11 +161,44 @@ fun DeviceDiscoveryContent(
 				verticalArrangement = Arrangement.spacedBy(8.dp),
 				contentPadding = PaddingValues(bottom = 88.dp)
 			) {
+				state.activeDevice?.let { device ->
+					val isActive = state.localPlayerState == PlayerState.InGame || state.localPlayerState == PlayerState.InGamePaused
+					if (isActive) {
+						item { SectionHeader("Current Session") }
+						item {
+							DeviceItem(
+								device = device,
+								remotePlayerState = state.remotePlayerStates[device.address] ?: PlayerState.Free,
+								localPlayerState = state.localPlayerState,
+								isRequested = false,
+								isInviter = false,
+								canRejoin = true,
+								isConnecting = state.connectionStatus is ConnectionStatus.Connecting && state.connectionStatus.device.address == device.address,
+								onClick = {
+									val status = state.connectionStatus
+									if (status is ConnectionStatus.Connecting && status.device.address == device.address) {
+										onAction(DeviceDiscoveryAction.CancelConnectionAttempt(device.address))
+									} else {
+										onAction(DeviceDiscoveryAction.Connect(device))
+									}
+								},
+								onPlayClick = { onAction(DeviceDiscoveryAction.RequestGame(device)) },
+								onRejoinClick = { state.activeGameConfig?.let { onAction(DeviceDiscoveryAction.RejoinGame(it)) } },
+								onDisconnectClick = { onAction(DeviceDiscoveryAction.Disconnect(device)) }
+							)
+						}
+						item { HorizontalDivider(modifier = Modifier.padding(vertical = 8.dp)) }
+					}
+				}
+
 				if (state.pairedDevices.isNotEmpty()) {
 					item { SectionHeader("Paired Devices") }
 					items(state.pairedDevices) { device ->
+						val isActive = state.localPlayerState == PlayerState.InGame || state.localPlayerState == PlayerState.InGamePaused
+						if (device.address == state.activeGameConfig?.deviceAddress && isActive) return@items
+
 						val canRejoin = state.activeGameConfig?.deviceAddress == device.address &&
-								state.remotePlayerStates[device.address] == PlayerState.InGame
+								state.localPlayerState == PlayerState.InGamePaused
 
 						DeviceItem(
 							device = device,
@@ -195,8 +228,11 @@ fun DeviceDiscoveryContent(
 					item { SectionHeader("Discovered Devices") }
 					items(state.scannedDevices) { scanned ->
 						val device = scanned.device
+						val isActive = state.localPlayerState == PlayerState.InGame || state.localPlayerState == PlayerState.InGamePaused
+						if (device.address == state.activeGameConfig?.deviceAddress && isActive) return@items
+
 						val canRejoin = state.activeGameConfig?.deviceAddress == device.address &&
-								state.remotePlayerStates[device.address] == PlayerState.InGame
+								state.localPlayerState == PlayerState.InGamePaused
 
 						DeviceItem(
 							device = device,
@@ -328,6 +364,7 @@ fun DeviceItem(
 					val statusText = when {
 						isRequested -> "Waiting..."
 						isInviter -> "Invited you"
+						remotePlayerState == PlayerState.InGamePaused -> "In Game (Paused)"
 						else -> remotePlayerState.name
 					}
 					Text(
@@ -339,6 +376,7 @@ fun DeviceItem(
 							remotePlayerState == PlayerState.Invited -> Color(0xFFFF9800)
 							remotePlayerState == PlayerState.Waiting -> Color(0xFFFF9800)
 							remotePlayerState == PlayerState.InGame -> Color(0xFF2196F3)
+							remotePlayerState == PlayerState.InGamePaused -> Color(0xFF2196F3)
 							else -> Color.Unspecified
 						}
 					)
@@ -359,7 +397,7 @@ fun DeviceItem(
 				if (canRejoin) {
 					Button(
 						onClick = onRejoinClick,
-						enabled = localPlayerState == PlayerState.Free
+						enabled = localPlayerState == PlayerState.InGamePaused
 					) {
 						Text("Rejoin", style = MaterialTheme.typography.labelSmall)
 					}

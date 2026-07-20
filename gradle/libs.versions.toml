@@ -10,6 +10,10 @@ activityCompose = "1.13.0"
 kotlin = "2.2.10"
 kotlinxSerializationJson = "1.8.0"
 composeBom = "2026.02.01"
+koin = "4.2.2"
+nav3 = "1.1.4"
+lifecycleViewmodelNav3 = "2.11.0"
+
 
 lapisBt = "3.1.1"
 yuruPermissions = "2.0.3"
@@ -41,7 +45,14 @@ flow-combinetuple = { group = "com.github.Zhuinden", name = "flow-combinetuple-k
 
 androidx-compose-material-icons-extended = { group = "androidx.compose.material", name = "material-icons-extended" }
 
+koin-android = { group = "io.insert-koin", name = "koin-android", version.ref = "koin" }
+koin-androidx-compose = { group = "io.insert-koin", name = "koin-androidx-compose", version.ref = "koin" }
+androidx-navigation3-runtime = { group = "androidx.navigation3", name = "navigation3-runtime", version.ref = "nav3" }
+androidx-navigation3-ui = { group = "androidx.navigation3", name = "navigation3-ui", version.ref = "nav3" }
+androidx-lifecycle-viewmodel-navigation3 = { group = "androidx.lifecycle", name = "lifecycle-viewmodel-navigation3", version.ref = "lifecycleViewmodelNav3" }
+
 [plugins]
+
 android-application = { id = "com.android.application", version.ref = "agp" }
 kotlin-compose = { id = "org.jetbrains.kotlin.plugin.compose", version.ref = "kotlin" }
 kotlin-android = { id = "org.jetbrains.kotlin.android", version.ref = "kotlin" }

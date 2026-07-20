@@ -4,127 +4,95 @@ import android.os.Bundle
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
-import androidx.compose.runtime.LaunchedEffect
-import androidx.compose.runtime.getValue
-import androidx.compose.runtime.mutableStateOf
-import androidx.compose.runtime.remember
-import androidx.compose.runtime.setValue
-import androidx.compose.runtime.MutableState
-import androidx.compose.runtime.saveable.Saver
+import androidx.compose.runtime.mutableStateListOf
+import androidx.compose.runtime.saveable.listSaver
 import androidx.compose.runtime.saveable.rememberSaveable
-import androidx.compose.ui.platform.LocalContext
-import androidx.lifecycle.viewmodel.compose.viewModel
-import com.elianfabian.bluetoothtictactoe.data.LocalTicTacToeDataSource
-import com.elianfabian.bluetoothtictactoe.data.PlayerState
-import com.elianfabian.bluetoothtictactoe.data.RemoteTicTacToeDataSource
-import com.elianfabian.bluetoothtictactoe.rpc.TicTacToeService
+import androidx.compose.runtime.snapshots.SnapshotStateList
+import androidx.lifecycle.viewmodel.navigation3.rememberViewModelStoreNavEntryDecorator
+import androidx.navigation3.runtime.NavEntry
+import androidx.navigation3.runtime.rememberSaveableStateHolderNavEntryDecorator
+import androidx.navigation3.ui.NavDisplay
 import com.elianfabian.bluetoothtictactoe.ui.discovery.DeviceDiscoveryScreen
-import com.elianfabian.bluetoothtictactoe.ui.discovery.DeviceDiscoveryViewModel
 import com.elianfabian.bluetoothtictactoe.ui.game.GameScreen
-import com.elianfabian.bluetoothtictactoe.ui.game.GameViewModel
 import com.elianfabian.bluetoothtictactoe.ui.theme.BluetoothTicTacToeTheme
 import com.elianfabian.lapisbt.model.BluetoothDevice
+import kotlinx.serialization.Serializable
+import kotlinx.serialization.json.Json
+import org.koin.android.ext.android.get
+import org.koin.androidx.compose.koinViewModel
+import org.koin.core.parameter.parametersOf
 
 class MainActivity : ComponentActivity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
-        LapisBtProvider.getLapisBt(this)
         enableEdgeToEdge()
         setContent {
             BluetoothTicTacToeTheme {
-                val context = LocalContext.current
-                var currentScreen by rememberSaveable(saver = ScreenSaver) { 
-                    mutableStateOf<Screen>(Screen.Discovery) 
+                val backStack = rememberSaveable(saver = Nav3BackStackSaver) {
+                    mutableStateListOf<Any>(Route.Discovery)
                 }
 
-                LaunchedEffect(Unit) {
-                    // We removed the automatic server start. It's now handled by the ViewModel via UI
-                }
-
-                when (val screen = currentScreen) {
-                    Screen.Discovery -> {
-                        val discoveryViewModel: DeviceDiscoveryViewModel = viewModel(
-                            factory = GenericViewModelFactory { DeviceDiscoveryViewModel(context) }
-                        )
-                        DeviceDiscoveryScreen(
-                            viewModel = discoveryViewModel,
-                            onNavigateToGame = { address, isHost, sessionId ->
-                                currentScreen = Screen.Game(address, isHost, sessionId)
+                NavDisplay(
+                    backStack = backStack,
+                    onBack = {
+                        if (backStack.size > 1) {
+                            backStack.removeLastOrNull()
+                        } else {
+                            finish()
+                        }
+                    },
+                    entryDecorators = listOf(
+                        rememberSaveableStateHolderNavEntryDecorator(),
+                        rememberViewModelStoreNavEntryDecorator()
+                    ),
+                    entryProvider = { key ->
+                        when (key) {
+                            is Route.Discovery -> NavEntry(key) {
+                                DeviceDiscoveryScreen(
+                                    viewModel = koinViewModel(),
+                                    onNavigateToGame = { address, isHost, sessionId ->
+                                        backStack.add(Route.Game(address.value, isHost, sessionId))
+                                    }
+                                )
                             }
-                        )
+                            is Route.Game -> NavEntry(key) {
+                                val addr = BluetoothDevice.Address(key.address)
+                                GameScreen(
+                                    viewModel = koinViewModel { parametersOf(addr, key.isHost) },
+                                    onNavigateBack = {
+                                        if (backStack.lastOrNull() is Route.Game) {
+                                            backStack.removeLastOrNull()
+                                        }
+                                    }
+                                )
+                            }
+                            else -> error("Unknown route: $key")
+                        }
                     }
-                    is Screen.Game -> {
-                        val gameViewModel: GameViewModel = viewModel(
-                            key = screen.address.value + "_" + screen.sessionId,
-                            factory = GenericViewModelFactory {
-                                val dataSource = if (screen.isHost) {
-                                    LocalTicTacToeDataSource()
-                                } else {
-                                    val rpc = LapisBtProvider.getLapisBtRpc(context)
-                                    val proxy = rpc.getOrCreateBluetoothClientService(screen.address, TicTacToeService::class)
-                                    RemoteTicTacToeDataSource(proxy)
-                                }
-                                GameViewModel(context, screen.address, screen.isHost, dataSource)
-                            }
-                        )
-                        GameScreen(
-                            viewModel = gameViewModel,
-                            onNavigateBack = { 
-                                LapisBtProvider.getPlayerRepository(applicationContext).state.value = PlayerState.Free
-                                currentScreen = Screen.Discovery 
-                            }
-                        )
-                    }
-                }
+                )
             }
         }
     }
-
-    override fun onDestroy() {
-        super.onDestroy()
-    }
-
-    companion object {
-        // Shared UUID is now managed in ViewModel/Provider
-    }
 }
 
-val ScreenSaver = Saver<MutableState<Screen>, Any>(
-    save = { state ->
-        when (val screen = state.value) {
-            Screen.Discovery -> listOf("Discovery")
-            is Screen.Game -> listOf("Game", screen.address.value, screen.isHost, screen.sessionId)
+@Serializable
+sealed interface Route {
+    @Serializable
+    data object Discovery : Route
+    @Serializable
+    data class Game(
+        val address: String,
+        val isHost: Boolean,
+        val sessionId: String
+    ) : Route
+}
+
+val Nav3BackStackSaver = listSaver<SnapshotStateList<Any>, String>(
+    save = { list -> list.map { Json.encodeToString(it as Route) } },
+    restore = { restored ->
+        mutableStateListOf<Any>().apply {
+            addAll(restored.map { Json.decodeFromString<Route>(it) })
         }
-    },
-    restore = { value ->
-        val list = value as List<*>
-        val screen = when (list[0]) {
-            "Discovery" -> Screen.Discovery
-            "Game" -> Screen.Game(
-                address = BluetoothDevice.Address(list[1] as String),
-                isHost = list[2] as Boolean,
-                sessionId = list[3] as String
-            )
-            else -> Screen.Discovery
-        }
-        mutableStateOf(screen)
     }
 )
-
-sealed interface Screen {
-    data object Discovery : Screen
-    data class Game(
-        val address: BluetoothDevice.Address, 
-        val isHost: Boolean,
-        val sessionId: String = java.util.UUID.randomUUID().toString()
-    ) : Screen
-}
-
-class GenericViewModelFactory<T : androidx.lifecycle.ViewModel>(
-    private val creator: () -> T
-) : androidx.lifecycle.ViewModelProvider.Factory {
-    override fun <T : androidx.lifecycle.ViewModel> create(modelClass: Class<T>): T {
-        return creator() as T
-    }
-}
