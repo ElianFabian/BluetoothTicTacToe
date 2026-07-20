@@ -127,38 +127,45 @@ fun GameContent(
             )
         }
     ) { padding ->
-        Box(
+        Column(
             modifier = Modifier
                 .fillMaxSize()
-                .padding(padding),
-            contentAlignment = Alignment.Center
+                .padding(padding)
+                .padding(16.dp),
+            horizontalAlignment = Alignment.CenterHorizontally
         ) {
-            Column(
-                horizontalAlignment = Alignment.CenterHorizontally,
-                verticalArrangement = Arrangement.Center,
-                modifier = Modifier.padding(16.dp)
+            Box(
+                modifier = Modifier.weight(1f),
+                contentAlignment = Alignment.BottomCenter
             ) {
                 StatusIndicator(state)
+            }
 
-                Spacer(modifier = Modifier.size(32.dp))
+            Spacer(modifier = Modifier.size(32.dp))
 
-                Board(
-                    board = state.board,
-                    onCellClick = { r, c -> onAction(GameAction.PlaceMove(r, c)) },
-                    enabled = state.gameStatus == GameStatus.Playing && state.currentTurn == state.mySymbol
-                )
+            Board(
+                board = state.board,
+                onCellClick = { r, c -> onAction(GameAction.PlaceMove(r, c)) },
+                enabled = state.gameStatus == GameStatus.Playing && state.currentTurn == state.mySymbol
+            )
 
-                if (state.gameStatus == GameStatus.Finished) {
-                    Spacer(modifier = Modifier.size(32.dp))
-                    Button(onClick = { onAction(GameAction.RestartGame) }) {
-                        Text("Restart Game")
+            Spacer(modifier = Modifier.size(32.dp))
+
+            Box(
+                modifier = Modifier.weight(1f),
+                contentAlignment = Alignment.TopCenter
+            ) {
+                Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                    if (state.gameStatus == GameStatus.Finished) {
+                        Button(onClick = { onAction(GameAction.RestartGame) }) {
+                            Text("Restart Game")
+                        }
                     }
-                }
 
-                if (state.gameStatus == GameStatus.OpponentLeft || state.gameStatus == GameStatus.OpponentDisconnected) {
-                    Spacer(modifier = Modifier.size(32.dp))
-                    Button(onClick = handleBack) {
-                        Text("Return to Discovery")
+                    if (state.gameStatus == GameStatus.OpponentLeft || state.gameStatus == GameStatus.OpponentDisconnected) {
+                        Button(onClick = handleBack) {
+                            Text("Return to Discovery")
+                        }
                     }
                 }
             }
