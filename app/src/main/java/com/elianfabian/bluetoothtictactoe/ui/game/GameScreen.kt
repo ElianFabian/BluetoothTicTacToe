@@ -65,11 +65,6 @@ fun GameScreen(
     viewModel: GameViewModel,
     onNavigateBack: () -> Unit
 ) {
-    androidx.compose.runtime.DisposableEffect(viewModel) {
-        viewModel.setActive(true)
-        onDispose { viewModel.setActive(false) }
-    }
-
     val state by viewModel.state.collectAsState()
     GameContent(
         state = state,
