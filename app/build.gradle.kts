@@ -21,11 +21,13 @@ android {
 
 	buildTypes {
 		release {
-			isMinifyEnabled = false
+			isMinifyEnabled = true
+			isShrinkResources = true
 			proguardFiles(
 				getDefaultProguardFile("proguard-android-optimize.txt"),
-				"proguard-rules.pro"
+				"src/main/keepRules/rules.keep"
 			)
+			signingConfig = signingConfigs.getByName("debug")
 		}
 	}
 	compileOptions {
